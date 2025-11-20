@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Real-World Snake</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+
+        body {
+            background-color: #0f172a; /* Fallback dark blue */
+            overflow: hidden;
+            font-family: 'Orbitron', sans-serif;
+            touch-action: none; /* Prevent scrolling on mobile */
+        }
+
+        /* The Camera Feed Layer */
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+            opacity: 0; /* Hidden until loaded */
+            transition: opacity 1s ease;
+            transform: scaleX(-1); /* Mirror the camera */
+        }
+
+        /* The Fallback Grid (visible if no camera) */
+        #fallback-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, #1e293b 0%, #020617 100%);
+            z-index: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        /* Grid pattern for fallback */
+        .grid-pattern {
+            width: 100%;
+            height: 100%;
+            background-image: 
+                linear-gradient(rgba(0, 255, 136, 0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 136, 0.1) 1px, transparent 1px);
+            background-size: 40px 40px;
+            perspective: 500px;
+        }
+
+        /* The Game Layer */
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            display: block;
+        }
+
+        /* Glassmorphism UI */
+        .glass-panel {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.1);
+        }
+
+        /* Neon Glow Utility */
+        .neon-text {
+            text-shadow: 0 0 10px #00ff88, 0 0 20px #00ff88;
+        }
+
+        /* D-Pad for Mobile */
+        .d-pad-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(0, 255, 136, 0.5);
+            color: white;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            touch-action: manipulation;
+            transition: background 0.1s;
+        }
+        .d-pad-btn:active {
+            background: rgba(0, 255, 136, 0.4);
+        }
+    </style>
+</head>
+<body class="text-white h-screen w-screen overflow-hidden">
+
+    <!-- Background Layers -->
+    <div id="fallback-bg"><div class="grid-pattern"></div></div>
+    <video id="webcam" autoplay playsinline muted></video>
+
+    <!-- Game Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD -->
+    <div class="absolute top-4 left-4 z-20 pointer-events-none">
+        <h1 class="text-2xl font-bold text-emerald-400 neon-text tracking-wider">AR SNAKE</h1>
+        <div class="mt-2 flex flex-col gap-1">
+            <span class="text-lg">SCORE: <span id="scoreVal" class="text-emerald-300 font-bold">0</span></span>
+            <span class="text-xs text-gray-400">HIGH: <span id="highScoreVal">0</span></span>
+        </div>
+    </div>
+
+    <!-- Camera Toggle (Top Right) -->
+    <div class="absolute top-4 right-4 z-30">
+        <button id="camToggle" class="glass-panel px-3 py-2 rounded text-xs text-emerald-400 hover:bg-white/10 transition">
+            📷 Toggle Cam
+        </button>
+    </div>
+
+    <!-- Start/Game Over Screen -->
+    <div id="menuOverlay" class="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm transition-opacity duration-300">
+        <div class="glass-panel p-8 rounded-2xl text-center max-w-md w-full mx-4 transform transition hover:scale-105 duration-300 border-emerald-500/50 border-2">
+            <h2 id="menuTitle" class="text-4xl font-bold mb-2 text-emerald-400 neon-text">Welcome in Panku Game</h2>
+            <p id="menuSub" class="text-gray-300 mb-6 text-sm">Eat energy orbs. Avoid walls & tail.</p>
+            
+            <button onclick="startGame()" class="w-full bg-gradient-to-r from-emerald-600 to-emerald-400 hover:from-emerald-500 hover:to-emerald-300 text-black font-bold py-4 px-8 rounded-xl text-xl shadow-[0_0_20px_rgba(0,255,136,0.5)] transition-all transform hover:translate-y-[-2px]">
+                START MISSION
+            </button>
+            
+            <div class="mt-6 text-xs text-gray-500">
+                <p>Desktop: Arrow Keys</p>
+                <p>Mobile: On-screen Pad</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Controls (Visible only on smaller screens or touch devices) -->
+    <div id="mobileControls" class="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-30 grid grid-cols-3 gap-2 opacity-50 hover:opacity-100 transition-opacity">
+        <div></div>
+        <button class="d-pad-btn" onpointerdown="handleInput('ArrowUp')">▲</button>
+        <div></div>
+        <button class="d-pad-btn" onpointerdown="handleInput('ArrowLeft')">◀</button>
+        <button class="d-pad-btn" onpointerdown="handleInput('ArrowDown')">▼</button>
+        <button class="d-pad-btn" onpointerdown="handleInput('ArrowRight')">▶</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('webcam');
+        const fallbackBg = document.getElementById('fallback-bg');
+        const menuOverlay = document.getElementById('menuOverlay');
+        const menuTitle = document.getElementById('menuTitle');
+        const menuSub = document.getElementById('menuSub');
+        const scoreEl = document.getElementById('scoreVal');
+        const highScoreEl = document.getElementById('highScoreVal');
+        
+        // --- Configuration ---
+        let gridSize = 25; // Base size, updated on resize
+        let tileCountX, tileCountY;
+        let gameSpeed = 100; // ms per tick
+        
+        // --- State ---
+        let snake = [];
+        let food = { x: 5, y: 5 };
+        let velocity = { x: 0, y: 0 };
+        let nextVelocity = { x: 0, y: 0 }; // Buffering input to prevent self-collision bugs
+        let score = 0;
+        let highScore = localStorage.getItem('arSnakeHighScore') || 0;
+        highScoreEl.innerText = highScore;
+        let gameLoopId;
+        let isRunning = false;
+        let lastRenderTime = 0;
+        let cameraActive = false;
+        
+        // Particles for effects
+        let particles = [];
+
+        // --- Resize Handling ---
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // Calculate grid based on screen size
+            // We want roughly 20-30 columns on mobile, more on desktop
+            const isMobile = window.innerWidth < 768;
+            const targetCols = isMobile ? 20 : 40;
+            gridSize = Math.floor(canvas.width / targetCols);
+            
+            tileCountX = Math.floor(canvas.width / gridSize);
+            tileCountY = Math.floor(canvas.height / gridSize);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- Camera Logic ---
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.style.opacity = '0.6';
+                    fallbackBg.style.display = 'none';
+                    cameraActive = true;
+                };
+            } catch (err) {
+                console.warn("Camera access denied or not available. Using fallback.");
+                video.style.display = 'none';
+                fallbackBg.style.display = 'flex';
+                cameraActive = false;
+            }
+        }
+        
+        // Try init camera on load, but don't block if it fails
+        document.getElementById('camToggle').addEventListener('click', () => {
+            if (!cameraActive) {
+                initCamera();
+            } else {
+                // Toggle off behavior (simulated)
+                if(video.style.display === 'none') {
+                     video.style.display = 'block';
+                     video.style.opacity = '0.6';
+                     fallbackBg.style.display = 'none';
+                } else {
+                    video.style.display = 'none';
+                    fallbackBg.style.display = 'flex';
+                }
+            }
+        });
+
+        // --- Input Handling ---
+        document.addEventListener('keydown', (e) => handleInput(e.key));
+
+        function handleInput(key) {
+            // Prevent scrolling with arrows
+            if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(key)) {
+                // e.preventDefault() not needed here if handled elsewhere, 
+                // but good practice if focus is on body
+            }
+
+            switch(key) {
+                case 'ArrowLeft': case 'a': case 'A':
+                    if (velocity.x !== 1) nextVelocity = { x: -1, y: 0 };
+                    break;
+                case 'ArrowUp': case 'w': case 'W':
+                    if (velocity.y !== 1) nextVelocity = { x: 0, y: -1 };
+                    break;
+                case 'ArrowRight': case 'd': case 'D':
+                    if (velocity.x !== -1) nextVelocity = { x: 1, y: 0 };
+                    break;
+                case 'ArrowDown': case 's': case 'S':
+                    if (velocity.y !== -1) nextVelocity = { x: 0, y: 1 };
+                    break;
+            }
+        }
+
+        // --- Game Logic ---
+        function startGame() {
+            resize(); // Ensure grid is correct size
+            menuOverlay.classList.add('opacity-0', 'pointer-events-none');
+            
+            // Reset State
+            let startX = Math.floor(tileCountX / 2);
+            let startY = Math.floor(tileCountY / 2);
+            snake = [
+                { x: startX, y: startY },
+                { x: startX, y: startY + 1 },
+                { x: startX, y: startY + 2 }
+            ];
+            velocity = { x: 0, y: -1 }; // Start moving up
+            nextVelocity = { x: 0, y: -1 };
+            score = 0;
+            scoreEl.innerText = 0;
+            particles = [];
+            placeFood();
+            
+            isRunning = true;
+            window.requestAnimationFrame(mainLoop);
+        }
+
+        function gameOver() {
+            isRunning = false;
+            
+            // Update High Score
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('arSnakeHighScore', highScore);
+                highScoreEl.innerText = highScore;
+                menuTitle.innerText = "NEW HIGH SCORE!";
+                menuTitle.classList.add("text-yellow-400");
+            } else {
+                menuTitle.innerText = "GAME OVER";
+                menuTitle.classList.remove("text-yellow-400");
+            }
+            
+            menuSub.innerText = `Final Score: ${score}`;
+            menuOverlay.classList.remove('opacity-0', 'pointer-events-none');
+        }
+
+        function placeFood() {
+            let valid = false;
+            while (!valid) {
+                food.x = Math.floor(Math.random() * tileCountX);
+                food.y = Math.floor(Math.random() * tileCountY);
+                
+                valid = true;
+                // Check if food is on snake
+                for(let part of snake) {
+                    if (part.x === food.x && part.y === food.y) {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 12; i++) {
+                particles.push({
+                    x: x * gridSize + gridSize/2,
+                    y: y * gridSize + gridSize/2,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        function mainLoop(currentTime) {
+            if (!isRunning) return;
+            
+            window.requestAnimationFrame(mainLoop);
+            
+            const secondsSinceLastRender = (currentTime - lastRenderTime) / 1000;
+            if (secondsSinceLastRender < gameSpeed / 1000) return; // Cap FPS for game logic
+            
+            lastRenderTime = currentTime;
+            update();
+            draw();
+        }
+
+        function update() {
+            // Apply buffered velocity
+            velocity = nextVelocity;
+
+            // Calculate new head
+            const head = { x: snake[0].x + velocity.x, y: snake[0].y + velocity.y };
+
+            // Collision: Walls
+            if (head.x < 0 || head.x >= tileCountX || head.y < 0 || head.y >= tileCountY) {
+                gameOver();
+                return;
+            }
+
+            // Collision: Self
+            for (let i = 0; i < snake.length; i++) {
+                if (head.x === snake[i].x && head.y === snake[i].y) {
+                    gameOver();
+                    return;
+                }
+            }
+
+            snake.unshift(head);
+
+            // Eat Food
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                scoreEl.innerText = score;
+                // Speed up slightly
+                gameSpeed = Math.max(50, 100 - (score / 5)); 
+                
+                createExplosion(food.x, food.y, '#00ff88');
+                placeFood();
+            } else {
+                snake.pop(); // Remove tail
+            }
+
+            // Update Particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.05;
+                if(p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Particles
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            ctx.globalAlpha = 1.0;
+
+            // Draw Food (Pulse Effect)
+            const pulse = 1 + Math.sin(Date.now() / 200) * 0.1;
+            ctx.save();
+            ctx.translate(food.x * gridSize + gridSize/2, food.y * gridSize + gridSize/2);
+            ctx.scale(pulse, pulse);
+            
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 20;
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(0, 0, gridSize/2 - 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Draw Snake
+            snake.forEach((part, index) => {
+                let x = part.x * gridSize;
+                let y = part.y * gridSize;
+                
+                // Gradient color
+                ctx.shadowBlur = index === 0 ? 20 : 10;
+                ctx.shadowColor = '#00ff88';
+                
+                if (index === 0) {
+                    // Head
+                    ctx.fillStyle = '#ffffff';
+                } else {
+                    // Body
+                    // Fade green to blue
+                    ctx.fillStyle = `rgb(0, 255, ${100 + (index * 5)})`;
+                }
+
+                // Draw Rounded Rects
+                const radius = 4;
+                ctx.beginPath();
+                ctx.roundRect(x + 1, y + 1, gridSize - 2, gridSize - 2, radius);
+                ctx.fill();
+            });
+        }
+        
+        // Initialize Camera silently on load
+        initCamera();
+
+    </script>
+</body>
+</html>
